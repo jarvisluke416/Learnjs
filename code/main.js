@@ -1,145 +1,135 @@
 import kaplay from "kaplay";
 
-// Sample dictionary (expand this with more words)
-const dictionary = [
-    "him", "her", "his", "she", "he", "me", "them", "man", "woman", "hello", "yes", "no", "bat", "ball", "game", "apple"
-    // Add more words or load a large word list here
-];
+// Your Merriam-Webster API key
+const apiKey = "39afd003-102c-4b14-a140-71937359a084";
 
 const k = kaplay({
-    width: 720,
-    height: 900,
+    width: 800,
+    height: 750,
 });
 
 k.loadBean();
-k.setGravity(1000);
+// Remove gravity by not setting it
+// k.setGravity(400); // No gravity applied
 
-// Define the "game" scene with all gameplay logic
 k.scene("game", () => {
     const numColumns = 14;
     const columnWidth = k.width() / numColumns;
 
     const fallingLetters = [];
     const selectedLetters = []; // Store the selected letters
-    let lastLetterClickCount = 0; // Track clicks for the last letter
     let wordFormed = ""; // To store the word the player is forming
-    let lastClickedLetter = null; // Track the last clicked letter
     let points = 0; // Track player points
+    let gameOver = false; // Flag for game over state
 
-    const leftPanel = k.add([
-        k.rect(k.width() / 2, k.height()),
-        k.pos(0, 0),
-        k.color(0, 0, 255),
-        k.layer("background")
-    ]);
+    const leftPanel = k.add([k.rect(k.width() / 2, k.height()), k.pos(0, 0), k.color(0, 0, 255), k.layer("background")]);
+    const rightPanel = k.add([k.rect(k.width() / 2, k.height()), k.pos(k.width() / 2, 0), k.color(255, 0, 0), k.layer("background")]);
+    k.add([k.rect(k.width(), 50), k.pos(0, k.height() - 50), k.area(), k.outline(3), k.body({ isStatic: true })]);
+    const counterUI = k.add([k.text("Points: 0", { size: 32, font: "monospace", color: [0, 0, 0] }), k.pos(k.width() / 2 - 80, k.height() / 2 - 350)]);
 
-    const rightPanel = k.add([
-        k.rect(k.width() / 2, k.height()),
-        k.pos(k.width() / 2, 0),
-        k.color(255, 0, 0),
-        k.layer("background")
-    ]);
+    // Count of total letters on the screen
+    let totalLettersOnScreen = 0;
 
-    k.add([
-        k.rect(k.width(), 50),
-        k.pos(0, k.height() - 50),
-        k.area(),
-        k.outline(3),
-        k.body({ isStatic: true }),
-    ]);
+    const letterSpeed = 1; // Speed at which the letters fall (increase this value to make letters fall faster)
 
-    let counter = 0;
-    const counterUI = k.add([k.text("0"), k.pos(k.width() - 100, 10)]);
-    const columnHeights = Array(numColumns).fill(0);
+    // Define a limit for the total number of letters on screen
+    const maxLettersOnScreen = 199;
 
     k.loop(1, () => {
-        counter++;
-        counterUI.text = counter;
+        if (gameOver) return; // Stop the game loop if the game is over
 
+        // Generate a random letter
         const letter = String.fromCharCode(65 + Math.floor(Math.random() * 26)); // Random letter A-Z
-        const speed = 1000;
         const columnIndex = Math.floor(Math.random() * numColumns);
-
         const startX = columnIndex * columnWidth + columnWidth / 2;
         const startY = 0;
-
-        const fallingLetter = k.add([
-            k.text(letter, { size: 48, font: "monospace", color: [0, 0, 0] }),
-            k.pos(startX, startY),
-            k.area(),
-            k.body(),
-            k.layer("background"),
-        ]);
+        const fallingLetter = k.add([k.text(letter, { size: 48, font: "monospace", color: [0, 0, 0] }), k.pos(startX, startY), k.area(), k.body(), k.layer("background")]);
 
         fallingLetters.push(fallingLetter);
+        totalLettersOnScreen++; // Increment the total letters on screen
 
-        // Click event: Change color of the clicked letter and track it
+        // Check if the total letters exceed the limit
+        if (totalLettersOnScreen > maxLettersOnScreen) {
+            gameOver = true;
+            showGameOver();
+            return; // Stop generating letters once the game is over
+        }
+
         fallingLetter.onClick(() => {
-            if (!selectedLetters.includes(fallingLetter)) {
-                selectedLetters.push(fallingLetter); // Add to selected letters
+            if (!gameOver && !selectedLetters.includes(fallingLetter)) {
+                selectedLetters.push(fallingLetter);
                 fallingLetter.color = [255, 255, 0]; // Change color to yellow
                 wordFormed += fallingLetter.text; // Append the letter to the word
-
-                // Track clicks for the last letter
-                lastClickedLetter = fallingLetter; // Track the last clicked letter
-                lastLetterClickCount = 0; // Reset count when a new letter is selected
-            }
-
-            // Track clicks on the last letter
-            if (fallingLetter === lastClickedLetter) {
-                lastLetterClickCount++;
-                console.log(`Clicked "${fallingLetter.text}" ${lastLetterClickCount} times`); // Debugging line
             }
         });
 
         fallingLetter.onUpdate(() => {
+            // Move the letter down by the speed
+            fallingLetter.pos.y += letterSpeed;
+
+            // If the letter reaches the platform (bottom of the screen), stop its movement
             if (fallingLetter.pos.y >= k.height() - 50) {
-                fallingLetter.destroy();
-                columnHeights[columnIndex] = 0;
-            }
-        });
-
-        fallingLetter.onUpdate(() => {
-            if (fallingLetter.pos.y > columnHeights[columnIndex]) {
-                columnHeights[columnIndex] = fallingLetter.pos.y;
+                fallingLetter.pos.y = k.height() - 50; // Ensure it stays on the platform
             }
         });
     });
 
-    // Check word validity when the last letter is clicked three times
-    k.onKeyPress("space", () => {
-        if (lastLetterClickCount === 3 && wordFormed.length > 0) {
-            const word = wordFormed.toLowerCase();
-            console.log("Word formed:", word); // Debugging line
+    // Function to check if the word is valid via the Merriam-Webster API
+    const checkWordInDictionary = async (word) => {
+        const response = await fetch(`https://www.dictionaryapi.com/api/v3/references/collegiate/json/${word.toLowerCase()}?key=${apiKey}`);
+        const data = await response.json();
+        return data && data.length > 0 && typeof data[0] === "object"; // Check if the response is valid
+    };
 
-            // Check if the word is in the dictionary
-            if (dictionary.includes(word)) {
-                console.log("Valid word:", word);
-                // Award 100 points
-                points += 100;
-                console.log(`Points awarded: 100. Total points: ${points}`);
-                // Update points on the screen
-                counterUI.text = points;
+    // Check word validity when the spacebar is pressed
+    k.onKeyPress("space", async () => {
+        if (gameOver) return; // Do nothing if the game is over
+        if (wordFormed.length > 0) {
+            const word = wordFormed.toUpperCase(); // Ensure word is uppercase to match dictionary
+            const isValid = await checkWordInDictionary(word);
+            if (isValid) {
+                let wordPoints = 0;
+                for (let letter of word) {
+                    if ("JKWXZV".includes(letter)) {
+                        wordPoints += 1000; // High-value letters
+                    } else {
+                        wordPoints += 100; // Regular letters
+                    }
+                }
 
-                // Remove the selected letters from the screen
-                selectedLetters.forEach(letter => letter.destroy());
-                fallingLetters.length = 0; // Clear the falling letters array
-                selectedLetters.length = 0; // Clear selected letters
-                wordFormed = ""; // Reset the word
-                lastLetterClickCount = 0; // Reset click count
-                lastClickedLetter = null; // Reset the last clicked letter
+                points += wordPoints;
+                counterUI.text = `Points: ${points}`;
+                selectedLetters.forEach((letter) => letter.destroy());
+                fallingLetters.length = 0;
+                selectedLetters.length = 0;
+                wordFormed = "";
             } else {
-                console.log("Invalid word:", word);
+                gameOver = true;
+                showGameOver();
             }
-        } else {
-            console.log("Word not yet complete or last letter not clicked 3 times");
         }
     });
 
+    // Display "GAME OVER!!" at the center of the screen
+    const showGameOver = () => {
+        k.add([
+            k.text("GAME OVER!!", { size: 64, font: "monospace", color: [255, 0, 0] }),
+            k.pos(k.width() / 2 - 200, k.height() / 2 - 50),
+            k.layer("background")
+        ]);
+    };
+
     // Restart game
     k.onKeyPress("r", () => {
+        gameOver = false; // Reset the game over state
+        points = 0; // Reset the points
+        wordFormed = "";
+        selectedLetters.length = 0;
+        fallingLetters.length = 0;
+        totalLettersOnScreen = 0; // Reset the total letters count
         k.go("game"); // Restart the game
     });
 });
 
 k.go("game");
+//12/23/2024 6:27
